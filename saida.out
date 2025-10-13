@@ -1,0 +1,20 @@
+;I
+0 _ # r 0_dir
+0 0 0 r setup_go_end
+0 1 1 r setup_go_end
+setup_go_end * * r setup_go_end
+setup_go_end _ _ l setup_copy
+setup_copy 0 _ r setup_write_0
+setup_copy 1 _ r setup_write_1
+setup_write_0 * 0 l setup_retorno
+setup_write_1 * 1 l setup_retorno
+setup_retorno * * l setup_copy
+setup_copy _ * r position_head
+position_head _ # r 0_dir
+0_dir 1 1 r 0_dir
+0_dir 0 0 r 0_dir
+0_dir _ _ l 1_dir
+1_dir # # d 1_dir
+1_dir 0 * l 1_dir
+1_dir 1 * l halt-accept
+halt-accept # # d halt-accept
