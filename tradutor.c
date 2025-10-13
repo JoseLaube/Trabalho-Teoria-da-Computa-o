@@ -33,7 +33,6 @@ MaquinaTuring* traduzir_I_para_S(const MaquinaTuring* maquinaOriginal);
 void adicionar_transicao(MaquinaTuring* maquina, const char* estA, const char* simA, const char* simN, char dir, const char* estN);
 void salvar_maquina(const MaquinaTuring* maquina, const char* nomeArquivo);
 void liberar_maquina(MaquinaTuring* maquina);
-char** extrair_alfabeto(const MaquinaTuring* maquina, int* numSimbolos);
 
 
 
@@ -134,41 +133,6 @@ MaquinaTuring* traduzir_maquina(const MaquinaTuring* maquinaOriginal) {
     }
 }
 
-char** extrair_alfabeto(const MaquinaTuring* maquina, int* numSimbolos) {
-    int capacidade = 10;
-    char** alfabeto = (char**) malloc(capacidade * sizeof(char*));
-    *numSimbolos = 0;
-
-    // Função interna para adicionar um símbolo se ele for único
-    void adicionar_simbolo_se_unico(const char* simbolo) {
-        if (strcmp(simbolo, "*") == 0) return;
-
-        for (int i = 0; i < *numSimbolos; i++) {
-            if (strcmp(alfabeto[i], simbolo) == 0) {
-                return;
-            }
-        }
-        // Se chegou aqui, o símbolo é novo
-        if (*numSimbolos >= capacidade) {
-            capacidade *= 2;
-            alfabeto = (char**) realloc(alfabeto, capacidade * sizeof(char*));
-        }
-        alfabeto[*numSimbolos] = strdup(simbolo);
-        (*numSimbolos)++;
-    }
-
-    // Garante que o símbolo de branco esteja sempre no alfabeto
-    adicionar_simbolo_se_unico("_");
-
-    // Itera sobre todas as transições para encontrar os símbolos
-    for (int i = 0; i < maquina->numTransicoes; i++) {
-        adicionar_simbolo_se_unico(maquina->transicoes[i].simboloAtual);
-        adicionar_simbolo_se_unico(maquina->transicoes[i].novoSimbolo);
-    }
-    
-    return alfabeto;
-}
-
 void adicionar_transicao(MaquinaTuring* maquina, const char* estA, const char* simA, const char* simN, char dir, const char* estN) {
     // Verifica se o array de transições precisa crescer
     if (maquina->numTransicoes >= maquina->capacidadeTransicoes) {
@@ -230,29 +194,9 @@ void liberar_maquina(MaquinaTuring* maquina) {
     free(maquina);
 }
 
-void adicionar_estado_se_unico(char*** lista, int* contador, int* capacidade, const char* estado) {
-    // Verifica se o estado já está na lista
-    for (int i = 0; i < *contador; i++) {
-        if (strcmp((*lista)[i], estado) == 0) {
-            return; // Já existe, não faz nada
-        }
-    }
-
-    // Se a lista estiver cheia, aumenta o tamanho
-    if (*contador >= *capacidade) {
-        *capacidade = (*capacidade == 0) ? 10 : *capacidade * 2;
-        *lista = (char**) realloc(*lista, *capacidade * sizeof(char*));
-    }
-
-    // Adiciona o novo estado
-    (*lista)[*contador] = strdup(estado);
-    (*contador)++;
-}
 
 
-//  Lógica usada: sempre que a maquina for para a esquerda e ler um branco e depois desse branco tiver o # significa que ela atingiu 
-// o branco que representa o infinito a esquerda da fita, entao deve dar um shift para a esquerda em toda a fita para manter o branco 
-// apos o # inicial e depois escrever o simbolo que deveria ser escrito
+//  Lógica usada: Para desenvolver uma MT Duplamente Infinita (MT_di) que simule uma MT Sipser, precisamos primeiramente na MT_di mover o cabeçote para a esquerda e marcar o inicio da fita com um simbolo especial (no caso o #). Apartir disso a MT_di reproduz as transições para direita e parado exatamente da mesma forma que a do Sipser, a unica diferença é a o movimento para a esquerda que pode ser que o mesmo leve para o simbolo #, nesse caso o cabeçote deve voltar para a primeira celula (simbolo 0 ou 1). E para fazer essa verificação e garantir a integridade da tradução adicionamos a transição ("#", "#", 'r') para cada estado que possua uma transição para esquerda 'l'.
 
 MaquinaTuring* traduzir_S_para_I(const MaquinaTuring* maquinaOriginal) {
     MaquinaTuring* maquinaTraduzida = (MaquinaTuring*) malloc(sizeof(MaquinaTuring));
@@ -263,32 +207,17 @@ MaquinaTuring* traduzir_S_para_I(const MaquinaTuring* maquinaOriginal) {
     
     printf("-> Gerando sub-rotina de setup-shift para o alfabeto {0, 1} (versão final)...\n");
 
-    // Parte 1: Início e busca pelo fim da palavra
-    adicionar_transicao(maquinaTraduzida, "0", "_", "#", 'r', "0_dir");
-    adicionar_transicao(maquinaTraduzida, "0", "0", "0", 'r', "setup_go_end");
-    adicionar_transicao(maquinaTraduzida, "0", "1", "1", 'r', "setup_go_end");
-    adicionar_transicao(maquinaTraduzida, "setup_go_end", "*", "*", 'r', "setup_go_end");
-    adicionar_transicao(maquinaTraduzida, "setup_go_end", "_", "_", 'l', "setup_copy");
+    // Parte 1: Move para esquerda e coloca a barreira #
+    adicionar_transicao(maquinaTraduzida, "0", "*", "*", 'l', "marcar_#");
+    adicionar_transicao(maquinaTraduzida, "marcar_#", "*", "#", 'r', "0_dir");
 
-    // Parte 2: O loop de cópia com estado de retorno
-    adicionar_transicao(maquinaTraduzida, "setup_copy", "0", "_", 'r', "setup_write_0");
-    adicionar_transicao(maquinaTraduzida, "setup_copy", "1", "_", 'r', "setup_write_1");
-    adicionar_transicao(maquinaTraduzida, "setup_write_0", "*", "0", 'l', "setup_retorno");
-    adicionar_transicao(maquinaTraduzida, "setup_write_1", "*", "1", 'l', "setup_retorno");
-    adicionar_transicao(maquinaTraduzida, "setup_retorno", "*", "*", 'l', "setup_copy");
-    
-    // Parte 3: Adicionando a barreira #
-    adicionar_transicao(maquinaTraduzida, "setup_copy", "_", "*", 'r', "position_head");
-    adicionar_transicao(maquinaTraduzida, "position_head", "_", "#", 'r', "0_dir");
-
-    // Parte 4: Tratando as transições originais sem problemas (movimento para direita e Parado)
-    
     // Estrutura para rastrear estados que já possuem regra de barreira
     int capacidadeBarreira = 10;
     int numEstadosBarreira = 0;
     char** estadosComBarreira = (char**) malloc(capacidadeBarreira * sizeof(char*));
 
-    printf("-> Traduzindo regras simples (movimento 'r' e '*')...\n");
+    // Parte 2: Tratando as transições originais sem problemas (movimento para direita e Parado)
+    printf("-> Traduzindo regras simples (movimento 'r', '*' e 'l')...\n");
     for (int i = 0; i < maquinaOriginal->numTransicoes; i++) {
         const Transicao* t = &maquinaOriginal->transicoes[i];
 
@@ -318,9 +247,9 @@ MaquinaTuring* traduzir_S_para_I(const MaquinaTuring* maquinaOriginal) {
                 t->direcao,
                 novoEstadoDir);
         }
+        
         else if (t->direcao == 'l') {
-            /*
-            // A lógica aqui é idêntica à de cima, apenas para a direção 'l'
+            // A lógica aqui é identica a de cima, apenas para a direção 'l'
             char estadoAtualDir[100];
             char novoEstadoDir[100];
 
@@ -329,21 +258,11 @@ MaquinaTuring* traduzir_S_para_I(const MaquinaTuring* maquinaOriginal) {
 
             if (strncmp(t->novoEstado, "halt", 4) == 0) strcpy(novoEstadoDir, t->novoEstado);
             else sprintf(novoEstadoDir, "%s_dir", t->novoEstado);
-            
-            // Adiciona a transição 'l' traduzida (caso normal)
-            adicionar_transicao(maquinaTraduzida, estadoAtualDir, t->simboloAtual, t->novoSimbolo, t->direcao, novoEstadoDir);
-            */
-
-            char estadoAtualDir[100], novoEstadoDir[100];
-            if (strncmp(t->estadoAtual, "halt", 4) == 0) strcpy(estadoAtualDir, t->estadoAtual);
-            else sprintf(estadoAtualDir, "%s_dir", t->estadoAtual);
-            if (strncmp(t->novoEstado, "halt", 4) == 0) strcpy(novoEstadoDir, t->novoEstado);
-            else sprintf(novoEstadoDir, "%s_dir", t->novoEstado);
-            
-            // 1. Adiciona a transição 'l' normal (caso não seja na barreira)
+        
+             // Adiciona a transição 'l' normal (caso não seja na barreira)
             adicionar_transicao(maquinaTraduzida, estadoAtualDir, t->simboloAtual, t->novoSimbolo, 'l', novoEstadoDir);
             
-            // 2. Verifica se a regra de barreira para 'novoEstadoDir' já foi criada
+            // Verifica se a regra da mola para 'novoEstadoDir' já foi criada
             int regraJaExiste = 0;
             for (int j = 0; j < numEstadosBarreira; j++) {
                 if (strcmp(estadosComBarreira[j], novoEstadoDir) == 0) {
@@ -352,10 +271,10 @@ MaquinaTuring* traduzir_S_para_I(const MaquinaTuring* maquinaOriginal) {
                 }
             }
             
-            // 3. Se a regra ainda não existe, crie-a e registre o estado
+            // Se a regra ainda não existe, crie ela e registre o estado
             if (!regraJaExiste) {
-                // Adiciona a regra de "ricochete" (usei '*' para movimento estacionado)
-                adicionar_transicao(maquinaTraduzida, novoEstadoDir, "#", "#", 'd', novoEstadoDir);
+                // Adiciona a regra da mola: ao bater no '#', move para a direita 'r'
+                adicionar_transicao(maquinaTraduzida, novoEstadoDir, "#", "#", 'r', novoEstadoDir);
                 
                 // Registra que já criamos a regra para este estado
                 if (numEstadosBarreira >= capacidadeBarreira) {
@@ -364,7 +283,8 @@ MaquinaTuring* traduzir_S_para_I(const MaquinaTuring* maquinaOriginal) {
                 }
                 estadosComBarreira[numEstadosBarreira++] = strdup(novoEstadoDir);
             }
-    
+
+
         }
 
     }
@@ -373,10 +293,34 @@ MaquinaTuring* traduzir_S_para_I(const MaquinaTuring* maquinaOriginal) {
 }
 
 
-// Lógica que será usada: sempre que a maquina for para a esquerda e estiver no primeiro elemento ela irá
-// ler o # e isso é equivalente a bater na parede na maquina do sipser, ou seja, deve voltar para a primeira celula
+// Lógica que será usada:
+MaquinaTuring* traduzir_I_para_S(const MaquinaTuring* maquinaOriginal) {
+    MaquinaTuring* maquinaTraduzida = (MaquinaTuring*) malloc(sizeof(MaquinaTuring));
+    maquinaTraduzida->tipo = 'I';
+    maquinaTraduzida->numTransicoes = 0;
+    maquinaTraduzida->capacidadeTransicoes = 20;
+    maquinaTraduzida->transicoes = (Transicao*) malloc(maquinaTraduzida->capacidadeTransicoes * sizeof(Transicao));
+    
+    printf("-> Gerando sub-rotina de setup-shift para o alfabeto {0, 1} (versão final)...\n");
 
-MaquinaTuring* traduzir_I_para_S(const MaquinaTuring* maquinaOriginal) {}
+    // Parte 1: Início e busca pelo fim da palavra
+    adicionar_transicao(maquinaTraduzida, "0", "_", "#", 'r', "0_dir");
+    adicionar_transicao(maquinaTraduzida, "0", "0", "0", 'r', "setup_go_end");
+    adicionar_transicao(maquinaTraduzida, "0", "1", "1", 'r', "setup_go_end");
+    adicionar_transicao(maquinaTraduzida, "setup_go_end", "*", "*", 'r', "setup_go_end");
+    adicionar_transicao(maquinaTraduzida, "setup_go_end", "_", "_", 'l', "setup_copy");
+
+    // Parte 2: O loop de cópia com estado de retorno
+    adicionar_transicao(maquinaTraduzida, "setup_copy", "0", "_", 'r', "setup_write_0");
+    adicionar_transicao(maquinaTraduzida, "setup_copy", "1", "_", 'r', "setup_write_1");
+    adicionar_transicao(maquinaTraduzida, "setup_write_0", "*", "0", 'l', "setup_retorno");
+    adicionar_transicao(maquinaTraduzida, "setup_write_1", "*", "1", 'l', "setup_retorno");
+    adicionar_transicao(maquinaTraduzida, "setup_retorno", "*", "*", 'l', "setup_copy");
+    
+    // Parte 3: Adicionando a barreira #
+    adicionar_transicao(maquinaTraduzida, "setup_copy", "_", "*", 'r', "position_head");
+    adicionar_transicao(maquinaTraduzida, "position_head", "_", "#", 'r', "0_dir");
+}
 
 
 

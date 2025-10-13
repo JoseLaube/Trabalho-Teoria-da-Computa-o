@@ -1,6 +1,11 @@
 ;S
-0 1 1 r 0
-0 0 0 r 0
-0 _ _ l 1
-1 0 * l 1
-1 1 * l halt-accept
+0 1 x r 1
+0 0 x r 1
+1 1 _ r 1
+1 0 _ r 1
+1 _ F l 2
+2 _ * l 2
+2 x * l 3
+3 x * l 4
+4 x * l 5
+5 x _ * halt-accept
