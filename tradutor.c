@@ -126,7 +126,7 @@ MaquinaTuring* traduzir_maquina(const MaquinaTuring* maquinaOriginal) {
         case 'S':
             return traduzir_S_para_I(maquinaOriginal);
         case 'I':
-            //return traduzir_I_para_S(maquinaOriginal);
+            return traduzir_I_para_S(maquinaOriginal);
         default:
             fprintf(stderr, "ERRO: Tipo de máquina desconhecido '%c'.\n", maquinaOriginal->tipo);
             return NULL;
@@ -293,37 +293,278 @@ MaquinaTuring* traduzir_S_para_I(const MaquinaTuring* maquinaOriginal) {
 }
 
 
-// Lógica que será usada:
 MaquinaTuring* traduzir_I_para_S(const MaquinaTuring* maquinaOriginal) {
+    // --- INÍCIO: Parte de inicialização e coleta de estados (do seu código original) ---
+
+    // Renomeia o estado "0" original para "inicio" nas transições da máquina original antes de processá-las
+    // Isso evita conflitos com o novo estado "0" de pré-processamento na MT de Sipser.
+    // **IMPORTANTE**: Fazendo isso aqui, as transições da máquina original são MODIFICADAS.
+    // Para uma abordagem mais robusta, deveríamos copiar as transições e renomear na cópia.
+    // Por simplicidade e dada a natureza do exercício, vamos manter assim, mas é um ponto a notar.
+    // Criar cópia das transições
+    Transicao* transicoesCopiadas = (Transicao*) malloc(maquinaOriginal->numTransicoes * sizeof(Transicao));
+    for(int i=0;i<maquinaOriginal->numTransicoes;i++){
+        transicoesCopiadas[i].estadoAtual = strcmp(maquinaOriginal->transicoes[i].estadoAtual,"0")==0 ? strdup("inicio") : strdup(maquinaOriginal->transicoes[i].estadoAtual);
+        transicoesCopiadas[i].simboloAtual = strdup(maquinaOriginal->transicoes[i].simboloAtual);
+        transicoesCopiadas[i].novoSimbolo  = strdup(maquinaOriginal->transicoes[i].novoSimbolo);
+        transicoesCopiadas[i].direcao      = maquinaOriginal->transicoes[i].direcao;
+        transicoesCopiadas[i].novoEstado   = strcmp(maquinaOriginal->transicoes[i].novoEstado,"0")==0 ? strdup("inicio") : strdup(maquinaOriginal->transicoes[i].novoEstado);
+    }
+
+    
+    for (int i = 0; i < maquinaOriginal->numTransicoes; ++i) {
+        Transicao* t = &maquinaOriginal->transicoes[i];
+        if (strcmp(t->estadoAtual, "0") == 0) {
+            free(t->estadoAtual);
+            t->estadoAtual = strdup("inicio");
+        }
+        if (strcmp(t->novoEstado, "0") == 0) {
+            free(t->novoEstado);
+            t->novoEstado = strdup("inicio");
+        }       
+    }
+
     MaquinaTuring* maquinaTraduzida = (MaquinaTuring*) malloc(sizeof(MaquinaTuring));
-    maquinaTraduzida->tipo = 'I';
+    if (!maquinaTraduzida) {
+        fprintf(stderr, "ERRO: Falha na alocação de memória para a máquina traduzida.\n");
+        exit(EXIT_FAILURE);
+    }
+    maquinaTraduzida->tipo = 'S';
     maquinaTraduzida->numTransicoes = 0;
-    maquinaTraduzida->capacidadeTransicoes = 20;
+    maquinaTraduzida->capacidadeTransicoes = 2000; // suficiente para muitas regras
     maquinaTraduzida->transicoes = (Transicao*) malloc(maquinaTraduzida->capacidadeTransicoes * sizeof(Transicao));
-    
-    printf("-> Gerando sub-rotina de setup-shift para o alfabeto {0, 1} (versão final)...\n");
+    if (!maquinaTraduzida->transicoes) {
+        fprintf(stderr, "ERRO: Falha na alocação de memória para as transições traduzidas.\n");
+        exit(EXIT_FAILURE);
+    }
 
-    // Parte 1: Início e busca pelo fim da palavra
-    adicionar_transicao(maquinaTraduzida, "0", "_", "#", 'r', "0_dir");
-    adicionar_transicao(maquinaTraduzida, "0", "0", "0", 'r', "setup_go_end");
-    adicionar_transicao(maquinaTraduzida, "0", "1", "1", 'r', "setup_go_end");
-    adicionar_transicao(maquinaTraduzida, "setup_go_end", "*", "*", 'r', "setup_go_end");
-    adicionar_transicao(maquinaTraduzida, "setup_go_end", "_", "_", 'l', "setup_copy");
+    printf("-> Traduzindo I -> S (lógica baseada no script Python)...\n");
 
-    // Parte 2: O loop de cópia com estado de retorno
-    adicionar_transicao(maquinaTraduzida, "setup_copy", "0", "_", 'r', "setup_write_0");
-    adicionar_transicao(maquinaTraduzida, "setup_copy", "1", "_", 'r', "setup_write_1");
-    adicionar_transicao(maquinaTraduzida, "setup_write_0", "*", "0", 'l', "setup_retorno");
-    adicionar_transicao(maquinaTraduzida, "setup_write_1", "*", "1", 'l', "setup_retorno");
-    adicionar_transicao(maquinaTraduzida, "setup_retorno", "*", "*", 'l', "setup_copy");
+    // === Recolher conjunto de estados da maquinaOriginal, garantindo unicidade ===
+    int capEstados = 128;
+    int numEstados = 0;
+    char** estados = (char**) malloc(capEstados * sizeof(char*));
+    if (!estados) { fprintf(stderr, "ERRO: malloc estados\n"); exit(EXIT_FAILURE); }
+
+    // Primeiro, adicione todos os estados, lidando com a renomeação de '0' para 'inicio'
+    for (int i = 0; i < maquinaOriginal->numTransicoes; ++i) {
+        const Transicao* t = &maquinaOriginal->transicoes[i];
+        const char* current_state_name = t->estadoAtual;
+        const char* next_state_name = t->novoEstado;
+
+        // Adicionar estado atual se não existe
+        int found_current = 0;
+        for (int j = 0; j < numEstados; ++j) {
+            if (estados[j] && strcmp(estados[j], current_state_name) == 0) { found_current = 1; break; }
+        }
+        if (!found_current) {
+            if (numEstados >= capEstados) {
+                capEstados *= 2;
+                estados = (char**) realloc(estados, capEstados * sizeof(char*));
+                if (!estados) { fprintf(stderr,"ERRO realloc estados\n"); exit(EXIT_FAILURE); }
+            }
+            estados[numEstados++] = strdup(current_state_name);
+        }
+
+        // Adicionar próximo estado se não existe
+        int found_next = 0;
+        for (int j = 0; j < numEstados; ++j) {
+            if (estados[j] && strcmp(estados[j], next_state_name) == 0) { found_next = 1; break; }
+        }
+        if (!found_next) {
+            if (numEstados >= capEstados) {
+                capEstados *= 2;
+                estados = (char**) realloc(estados, capEstados * sizeof(char*));
+                if (!estados) { fprintf(stderr,"ERRO realloc estados\n"); exit(EXIT_FAILURE); }
+            }
+            estados[numEstados++] = strdup(next_state_name);
+        }
+    }
+    // Agora 'estados' contém uma lista única de todos os estados (onde '0' já foi renomeado para 'inicio')
+    // --- FIM: Parte de inicialização e coleta de estados ---
+
+
+    // === Agora construir as transicoes pre-processamento ===
+    printf("-> Adicionando transições de pré-processamento...\n");
+    // O estado '0' é o estado inicial real da MT de Sipser.
+    // Ele vai varrer a entrada, marcando-a e configurando a fita para o formato '# [neg] * [pos] &'
     
-    // Parte 3: Adicionando a barreira #
-    adicionar_transicao(maquinaTraduzida, "setup_copy", "_", "*", 'r', "position_head");
-    adicionar_transicao(maquinaTraduzida, "position_head", "_", "#", 'r', "0_dir");
+    // As transições de setup que você tinha originalmente para '0', '1_0', '1_1', etc.
+    // Esta parte do setup é complexa. Vou reintroduzir o setup que você tinha,
+    // mas com o cuidado de não usar 's' nas transições intermediárias.
+
+    adicionar_transicao(maquinaTraduzida, "0", "0", "#", 'r', "1_0");
+    adicionar_transicao(maquinaTraduzida, "0", "1", "#", 'r', "1_1");
+    adicionar_transicao(maquinaTraduzida, "0", "_", "*", 'r', "inicio"); // Se a fita é vazia, coloca '*' e vai para 'inicio'
+
+    adicionar_transicao(maquinaTraduzida, "1_0", "0", "0", 'r', "1_0");
+    adicionar_transicao(maquinaTraduzida, "1_0", "1", "0", 'r', "1_1");
+    adicionar_transicao(maquinaTraduzida, "1_0", "_", "0", 'r', "1__");
+
+    adicionar_transicao(maquinaTraduzida, "1_1", "0", "1", 'r', "1_0");
+    adicionar_transicao(maquinaTraduzida, "1_1", "1", "1", 'r', "1_1");
+    adicionar_transicao(maquinaTraduzida, "1_1", "_", "1", 'r', "1__");
+
+    adicionar_transicao(maquinaTraduzida, "1__", "_", "&", 'l', "2_");
+
+    adicionar_transicao(maquinaTraduzida, "2_", "#", "#", 'r', "inicio");
+    adicionar_transicao(maquinaTraduzida, "2_", "*", "*", 'l', "2_"); // Move para a esquerda até '#'
+
+    // === FASE 1: Traduzir cada transição original da maquinaOriginal ===
+    printf("-> Criando regras para cada transição da máquina Duplamente Infinita original...\n");
+    for (int i = 0; i < maquinaOriginal->numTransicoes; ++i) {
+        const Transicao* t = &maquinaOriginal->transicoes[i];
+
+        const char* estadoAtualMapeado = t->estadoAtual; 
+        const char* novoEstadoMapeado = t->novoEstado;
+        
+        char estadoAuxMovimento[512]; // Estado auxiliar para simular movimento e escrita
+
+        // Transição: (estadoAtualMapeado, simboloAtual) -> (novoSimbolo, direcao, novoEstadoMapeado)
+
+        if (t->direcao == 's') { // Simular direção 's' (stay/parar)
+            // Passo 1: Escreve o novo símbolo e move para a direita (temporariamente)
+            snprintf(estadoAuxMovimento, sizeof(estadoAuxMovimento), "%s_stay_aux_R_%s_sym_%s_new_sym_%s",
+                     estadoAtualMapeado, novoEstadoMapeado, t->simboloAtual, t->novoSimbolo);
+            adicionar_transicao(maquinaTraduzida, estadoAtualMapeado, t->simboloAtual, t->novoSimbolo, 'r', estadoAuxMovimento);
+
+            // Passo 2: Do estado auxiliar, move para a esquerda para o novo estado (completando o "stay")
+            // Precisa de regras para todos os símbolos possíveis na fita
+            adicionar_transicao(maquinaTraduzida, estadoAuxMovimento, "0", "0", 'l', novoEstadoMapeado);
+            adicionar_transicao(maquinaTraduzida, estadoAuxMovimento, "1", "1", 'l', novoEstadoMapeado);
+            adicionar_transicao(maquinaTraduzida, estadoAuxMovimento, "_", "_", 'l', novoEstadoMapeado);
+            adicionar_transicao(maquinaTraduzida, estadoAuxMovimento, "#", "#", 'l', novoEstadoMapeado);
+            adicionar_transicao(maquinaTraduzida, estadoAuxMovimento, "&", "&", 'l', novoEstadoMapeado);
+            adicionar_transicao(maquinaTraduzida, estadoAuxMovimento, "*", "*", 'l', novoEstadoMapeado);
+
+        } else if (t->direcao == 'r') { // Mover para a direita
+            // Regra principal para mover para a direita: escreve novo símbolo e move 'r'
+            adicionar_transicao(maquinaTraduzida, estadoAtualMapeado, t->simboloAtual, t->novoSimbolo, 'r', novoEstadoMapeado);
+            
+            // Regra especial: se o movimento para a direita encontra o marcador '&', a fita precisa ser estendida (shift)
+            char estadoShiftAmpWriteSym[512]; // Estado para escrever o novo símbolo no lugar de '&'
+            char estadoReturnAfterAmpShift[512]; // Estado para o retorno após o shift (cabeçote está em '_', ex-&, antes de ir para o novo estado)
+
+            snprintf(estadoShiftAmpWriteSym, sizeof(estadoShiftAmpWriteSym), "%s_shift_amp_write_%s", 
+                     estadoAtualMapeado, t->novoSimbolo); 
+            snprintf(estadoReturnAfterAmpShift, sizeof(estadoReturnAfterAmpShift), "%s_return_after_amp_shift", 
+                     novoEstadoMapeado); 
+
+            // 1. Se encontra '&', escreve o novo símbolo (t->novoSimbolo), e move para a direita para encontrar o blank
+            adicionar_transicao(maquinaTraduzida, estadoAtualMapeado, "&", t->novoSimbolo, 'r', estadoShiftAmpWriteSym); 
+            
+            // 2. No estado `estadoShiftAmpWriteSym`, quando encontra um blank `_`, escreve `&`, move para a esquerda e vai para o estado de retorno
+            adicionar_transicao(maquinaTraduzida, estadoShiftAmpWriteSym, "_", "&", 'l', estadoReturnAfterAmpShift);
+
+            // 3. No estado de retorno, o cabeçote está na posição onde antes estava o '&' (agora `_`).
+            // Ele "permanece" para simular a chegada no estado `novoEstadoMapeado` lendo `_`.
+            // Ou seja, a fita foi estendida, e o cabeçote está na célula que a MT original veria como a "próxima"
+            adicionar_transicao(maquinaTraduzida, estadoReturnAfterAmpShift, "_", "_", 's', novoEstadoMapeado);
+
+
+        } else if (t->direcao == 'l') { // Mover para a esquerda
+            // Regra principal para mover para a esquerda: escreve novo símbolo e move 'l'
+            adicionar_transicao(maquinaTraduzida, estadoAtualMapeado, t->simboloAtual, t->novoSimbolo, 'l', novoEstadoMapeado);
+            
+            // Regra especial: se o movimento para a esquerda encontra o marcador '#', a fita precisa ser estendida (shift)
+            char q1_hash_novoEstado[512];
+            snprintf(q1_hash_novoEstado, sizeof(q1_hash_novoEstado), "q1___%s", novoEstadoMapeado); // Reutilizando a lógica de q1___e para o shift
+            adicionar_transicao(maquinaTraduzida, estadoAtualMapeado, "#", t->novoSimbolo, 'r', q1_hash_novoEstado); // Move 'r' para iniciar o shift para '#'
+            
+            // NOVO: Adicionar uma transição para quando uma regra de movimento 'l' tenta escrever '&' no lugar de '&'
+            // Exemplo da sua entrada: `1 _ F l 2` se torna `1 _ & l 2`.
+            // Se o `simboloAtual` é `&` e `novoSimbolo` também é `&`, e a direção é `l`, precisamos tratar isso.
+            if (strcmp(t->simboloAtual, "&") == 0 && strcmp(t->novoSimbolo, "&") == 0) {
+                // Esta é uma regra que simula uma "autotransição" no '&' com movimento 'l'
+                // A ação é a mesma que quando a MT tenta mover para a esquerda e encontra '#':
+                // a fita toda precisa ser "deslocada" para a direita, e o cabeçote retorna para a posição.
+                // Reutilizamos a sub-rotina de shift (`q1___e`) para isso.
+                adicionar_transicao(maquinaTraduzida, estadoAtualMapeado, "&", "&", 'r', q1_hash_novoEstado); // Move 'r' para iniciar o shift (com o novo estado 'q1_hash_novoEstado')
+            }
+        }
+    }
+
+    // === FASE 2: Gerar as sub-rotinas de shift ===
+    printf("-> Gerando sub-rotinas de shift para cada estado...\n");
+    for (int idx = 0; idx < numEstados; ++idx) {
+        const char* e = estados[idx]; 
+
+        // Declarações movedas para dentro do loop para garantir que existam para cada 'e'
+        char nome_q1___e[512];
+        char nome_q1_0_e[512], nome_q1_1_e[512], nome_q1_amp_e[512]; // Alterado F para amp
+        char nome_q2e[512];
+        char nome_q_amp_e[512]; // Alterado F para amp
+
+        snprintf(nome_q1___e, sizeof(nome_q1___e), "q1___%s", e);
+        snprintf(nome_q1_0_e, sizeof(nome_q1_0_e), "q1_0_%s", e);
+        snprintf(nome_q1_1_e, sizeof(nome_q1_1_e), "q1_1_%s", e);
+        snprintf(nome_q1_amp_e, sizeof(nome_q1_amp_e), "q1_amp_%s", e); // Renomeado
+        snprintf(nome_q2e, sizeof(nome_q2e), "q2%s", e);
+        snprintf(nome_q_amp_e, sizeof(nome_q_amp_e), "q_amp%s", e); // Renomeado
+
+
+        // Estes estados (q1_0_e, q1_1_e, q1___e) são para o "shift right" da fita.
+        adicionar_transicao(maquinaTraduzida, nome_q1_0_e, "0", "0", 'r', nome_q1_0_e);
+        adicionar_transicao(maquinaTraduzida, nome_q1_0_e, "1", "0", 'r', nome_q1_1_e);
+        adicionar_transicao(maquinaTraduzida, nome_q1_0_e, "_", "0", 'r', nome_q1___e); 
+        adicionar_transicao(maquinaTraduzida, nome_q1_0_e, "&", "0", 'r', nome_q1_amp_e); // Alterado F para &
+        adicionar_transicao(maquinaTraduzida, nome_q1_0_e, "*", "0", 'r', "q1_star_0"); 
+
+        adicionar_transicao(maquinaTraduzida, nome_q1_1_e, "0", "1", 'r', nome_q1_0_e);
+        adicionar_transicao(maquinaTraduzida, nome_q1_1_e, "1", "1", 'r', nome_q1_1_e);
+        adicionar_transicao(maquinaTraduzida, nome_q1_1_e, "_", "1", 'r', nome_q1___e); 
+        adicionar_transicao(maquinaTraduzida, nome_q1_1_e, "&", "1", 'r', nome_q1_amp_e); // Alterado F para &
+        adicionar_transicao(maquinaTraduzida, nome_q1_1_e, "*", "1", 'r', "q1_star_1"); 
+
+        adicionar_transicao(maquinaTraduzida, nome_q1___e, "0", "_", 'r', nome_q1_0_e);
+        adicionar_transicao(maquinaTraduzida, nome_q1___e, "1", "_", 'r', nome_q1_1_e);
+        adicionar_transicao(maquinaTraduzida, nome_q1___e, "_", "_", 'r', nome_q1___e); // Loop para mover blanks
+        adicionar_transicao(maquinaTraduzida, nome_q1___e, "&", "_", 'r', nome_q1_amp_e); // Alterado F para &
+        adicionar_transicao(maquinaTraduzida, nome_q1___e, "*", "_", 'r', "q1_star_blank"); 
+
+        // q1_amp_e -> quando o shift atinge o '&' final.
+        adicionar_transicao(maquinaTraduzida, nome_q1_amp_e, "*", "&", 'l', nome_q2e); // Se lê '*', escreve '&', volta para iniciar o re-posicionamento
+        adicionar_transicao(maquinaTraduzida, nome_q1_amp_e, "_", "&", 'l', nome_q2e); // Se encontra blank, escreve '&', volta. 
+
+        // q1_star_X estados: para lidar com o marcador '*'.
+        // q1_star_0 (estava segurando '0', encontrou '*') -> escreve '0', move 'r', guarda '*'
+        adicionar_transicao(maquinaTraduzida, "q1_star_0", "0", "*", 'r', nome_q1_0_e);
+        adicionar_transicao(maquinaTraduzida, "q1_star_0", "1", "*", 'r', nome_q1_1_e);
+        adicionar_transicao(maquinaTraduzida, "q1_star_0", "_", "*", 'r', nome_q1___e);
+        adicionar_transicao(maquinaTraduzida, "q1_star_0", "&", "*", 'r', nome_q1_amp_e); // Alterado F para &
+
+        adicionar_transicao(maquinaTraduzida, "q1_star_1", "0", "*", 'r', nome_q1_0_e);
+        adicionar_transicao(maquinaTraduzida, "q1_star_1", "1", "*", 'r', nome_q1_1_e);
+        adicionar_transicao(maquinaTraduzida, "q1_star_1", "_", "*", 'r', nome_q1___e);
+        adicionar_transicao(maquinaTraduzida, "q1_star_1", "&", "*", 'r', nome_q1_amp_e); // Alterado F para &
+
+        adicionar_transicao(maquinaTraduzida, "q1_star_blank", "0", "*", 'r', nome_q1_0_e);
+        adicionar_transicao(maquinaTraduzida, "q1_star_blank", "1", "*", 'r', nome_q1_1_e);
+        adicionar_transicao(maquinaTraduzida, "q1_star_blank", "_", "*", 'r', nome_q1___e);
+        adicionar_transicao(maquinaTraduzida, "q1_star_blank", "&", "*", 'r', nome_q1_amp_e); // Alterado F para &
+
+
+        // q2e: loop left on '*', then on '#' go right to e (Retorna para o estado original 'e' após o shift)
+        adicionar_transicao(maquinaTraduzida, nome_q2e, "*", "*", 'l', nome_q2e);
+        adicionar_transicao(maquinaTraduzida, nome_q2e, "#", "#", 'r', e); // Alterado I para #
+        
+        // q_amp_e: '*', write '&', l, e (Reposiciona '&' e retorna para 'e') - Este estado é para o shift da direita
+        adicionar_transicao(maquinaTraduzida, nome_q_amp_e, "*", "&", 'l', e); // Se encontra '*', escreve '&', move para a esquerda para 'e'
+        adicionar_transicao(maquinaTraduzida, nome_q_amp_e, "0", "0", 'l', nome_q_amp_e); // Continua movendo esquerda
+        adicionar_transicao(maquinaTraduzida, nome_q_amp_e, "1", "1", 'l', nome_q_amp_e); // Continua movendo esquerda
+        adicionar_transicao(maquinaTraduzida, nome_q_amp_e, "_", "_", 'l', nome_q_amp_e); // Continua movendo esquerda
+        adicionar_transicao(maquinaTraduzida, nome_q_amp_e, "#", "#", 'r', e); // Se encontra '#', move para direita e vai para 'e' // Alterado I para #
+    }
+
+
+    // === Liberar lista temporaria de estados ===
+    for (int i = 0; i < numEstados; ++i) {
+        if (estados[i]) free(estados[i]);
+    }
+    free(estados);
+
+    return maquinaTraduzida;
 }
-
-
-
 
 
 int main(int argc, char *argv[]) {
